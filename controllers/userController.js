@@ -4,10 +4,10 @@ const Election = require("../models/Election");
 
 exports.applyCandidate = async (req, res) => {
     try {
-        const { name, StudentId, email, phone, statement, position, electionId } = req.body;
+        const { name, StudentId, email, phone, statement, electionId } = req.body;
         
         // Validate required fields
-        if (!name || !StudentId || !email || !phone || !statement || !position || !electionId) {
+        if (!name || !StudentId || !email || !phone || !statement || !electionId) {
             return res.status(400).json({ error: "All fields are required" });
         }
 
@@ -55,7 +55,6 @@ exports.applyCandidate = async (req, res) => {
             phone,
             statement,
             userId: req.userId,
-            position,
             status: "pending",
             electionId
         });

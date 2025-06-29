@@ -645,3 +645,75 @@ exports.getApprovedCandidates = async (req, res) => {
         res.status(500).json({ error: "Failed to get approved candidates" });
     }
 };
+const declareWinner = async (req, res) => {
+    try {
+        const { electionId } = req.params;
+
+        // Validate election exists
+        const election = await Election.findById(electionId);
+        if (!election) {
+            return res.status(404).json({ error: "Election not found" });
+        }
+
+        // Check if results can be declared
+        const now = new Date();
+        const resultDate = new Date(election.resultAnnouncementDate);
+        if (now < resultDate) {
+            return res.status(400).json({ 
+                error: "Cannot declare winner before result announcement date", 
+                availableAt: resultDate 
+            });
+        }
+
+        // Get all approved candidates and their vote counts
+        const candidates = await Candidate.find({ 
+            electionId: electionId,
+            status: "approved"
+        }).select('name position StudentId email');
+
+        const candidateVotes = await Promise.all(
+            candidates.map(async (candidate) => {
+                const voteCount = await Vote.countDocuments({ 
+                    candidateId: candidate._id,
+                    electionId: electionId
+                });
+                return {
+                    ...candidate.toObject(),
+                    voteCount
+                };
+            })
+        );
+
+        // Sort by votes and get winner(s)
+        candidateVotes.sort((a, b) => b.voteCount - a.voteCount);
+        const maxVotes = candidateVotes.length > 0 ? candidateVotes[0].voteCount : 0;
+        const winners = candidateVotes.filter(candidate => candidate.voteCount === maxVotes && maxVotes > 0);
+
+        if (winners.length === 0) {
+            return res.status(200).json({
+                message: "No winner could be declared (no votes cast)",
+                electionId,
+                winners: []
+            });
+        }
+
+        res.json({
+            message: winners.length > 1 ? "It's a tie!" : "Winner declared successfully",
+            electionId,
+            winners: winners.map(winner => ({
+                candidateId: winner._id,
+                name: winner.name,
+                studentId: winner.StudentId,
+                email: winner.email,
+                position: winner.position,
+                voteCount: winner.voteCount
+            })),
+            isTie: winners.length > 1,
+            declaredAt: new Date()
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: "Failed to declare winner" });
+    }
+};
+exports.declareWinner = declareWinner;

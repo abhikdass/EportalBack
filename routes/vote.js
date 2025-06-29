@@ -10,7 +10,7 @@ const {
     getVoteUpdatesSSE,
     getElectionResults,
     getActiveElectionResults,
-    getWinnerAnnouncement,
+    declareWinner,
     getAllElectionResults,
     getApprovedCandidates
 } = require("../controllers/voteController");
@@ -25,7 +25,12 @@ router.get("/live-updates/:electionId", getVoteUpdatesSSE); // Server-Sent Event
 // Result routes (public access after result announcement time)
 router.get("/results/:electionId", getElectionResults);
 router.get("/results/active", getActiveElectionResults);
-router.get("/winner/:electionId", getWinnerAnnouncement);
+router.get("/winner/:electionId", verifyToken, (req, res, next) => {
+    if (req.role !== "ecofficer") {
+        return res.status(403).json({ error: "Only EC Officer can view winner" });
+    }
+    next();
+}, declareWinner);
 router.get("/results/all", getAllElectionResults);
 
 // Protected routes (require authentication)
