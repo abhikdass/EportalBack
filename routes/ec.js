@@ -8,6 +8,7 @@ const {
     getCandidateDetails,
     updateCandidateStatus,
     bulkUpdateCandidateStatus,
+    deleteElection,
     getStats,
     getStudents,
     removeStudent
@@ -28,6 +29,7 @@ router.post("/approve/:id", approveCandidate);
 router.post("/reject/:id", rejectCandidate);
 router.put("/candidate/:id/status", updateCandidateStatus);
 router.put("/candidates/bulk-status", bulkUpdateCandidateStatus);
+router.delete("/election/:electionId", deleteElection);
 
 // User management routes
 router.get("/students", getStudents);

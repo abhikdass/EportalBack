@@ -24,13 +24,30 @@ exports.castVote = async (req, res) => {
             return res.status(400).json({ error: "Election is not active" });
         }
 
+        // Check if results have been officially announced
+        if (election.resultsAnnounced) {
+            return res.status(400).json({ 
+                error: "Voting has ended. Results have been officially announced",
+                resultsAnnouncedAt: election.resultAnnouncementDate
+            });
+        }
+
         // Check if it's voting time
         const now = new Date();
         const votingDate = new Date(election.votingDate);
+        const resultDate = new Date(election.resultAnnouncementDate);
         
         if (now < votingDate) {
             return res.status(400).json({ error: "Voting has not started yet" });
         }
+
+        // Check if results have been announced (voting period is over)
+        // if (now >= resultDate) {
+        //     return res.status(400).json({ 
+        //         error: "Voting has ended. Results have been announced",
+        //         resultAnnouncementDate: resultDate
+        //     });
+        // }
 
         // Check if candidate exists and is approved
         const candidate = await Candidate.findOne({ 
@@ -84,6 +101,7 @@ exports.getLiveVoteCount = async (req, res) => {
 
         // Validate election exists
         const election = await Election.findById(electionId);
+        // console.log(election.resultsAnnounced);
         if (!election) {
             return res.status(404).json({ error: "Election not found" });
         }
@@ -123,6 +141,7 @@ exports.getLiveVoteCount = async (req, res) => {
             : 0;
 
         res.json({
+            status: election.resultsAnnounced,
             electionId,
             electionTitle: election.title,
             electionPost: election.post,
@@ -435,17 +454,8 @@ exports.getElectionResults = async (req, res) => {
             electionId,
             electionTitle: election.title,
             electionPost: election.post,
-            electionType: election.type,
-            electionDates: {
-                nominationStart: election.nominationStartDate,
-                nominationEnd: election.nominationEndDate,
-                campaignStart: election.campaignStartDate,
-                campaignEnd: election.campaignEndDate,
-                votingDate: election.votingDate,
-                resultAnnouncement: election.resultAnnouncementDate
-            },
             totalVotes,
-            totalEligibleVoters,
+            totalEligibleVoters: await User.countDocuments({ role: "user" }),
             turnoutPercentage: parseFloat(
                 ((totalVotes / totalEligibleVoters) * 100).toFixed(2)
             ),
@@ -649,7 +659,7 @@ const declareWinner = async (req, res) => {
     try {
         const { electionId } = req.params;
 
-        // Validate election exists
+        // Fetch the election
         const election = await Election.findById(electionId);
         if (!election) {
             return res.status(404).json({ error: "Election not found" });
@@ -659,61 +669,256 @@ const declareWinner = async (req, res) => {
         const now = new Date();
         const resultDate = new Date(election.resultAnnouncementDate);
         if (now < resultDate) {
-            return res.status(400).json({ 
-                error: "Cannot declare winner before result announcement date", 
-                availableAt: resultDate 
+            return res.status(400).json({
+                error: "Cannot declare winner before result announcement date",
+                availableAt: resultDate,
             });
         }
 
-        // Get all approved candidates and their vote counts
-        const candidates = await Candidate.find({ 
-            electionId: electionId,
-            status: "approved"
-        }).select('name position StudentId email');
+        // Fetch approved candidates
+        const candidates = await Candidate.find({
+            electionId,
+            status: "approved",
+        }).select("name position StudentId email");
 
+        // Count votes for each candidate
         const candidateVotes = await Promise.all(
             candidates.map(async (candidate) => {
-                const voteCount = await Vote.countDocuments({ 
+                const voteCount = await Vote.countDocuments({
                     candidateId: candidate._id,
-                    electionId: electionId
+                    electionId,
                 });
-                return {
-                    ...candidate.toObject(),
-                    voteCount
-                };
+                return { ...candidate.toObject(), voteCount };
             })
         );
 
-        // Sort by votes and get winner(s)
+        // Determine the winner(s)
         candidateVotes.sort((a, b) => b.voteCount - a.voteCount);
-        const maxVotes = candidateVotes.length > 0 ? candidateVotes[0].voteCount : 0;
-        const winners = candidateVotes.filter(candidate => candidate.voteCount === maxVotes && maxVotes > 0);
+        const maxVotes = candidateVotes[0]?.voteCount || 0;
+        const winners = candidateVotes.filter(c => c.voteCount === maxVotes && maxVotes > 0);
 
-        if (winners.length === 0) {
-            return res.status(200).json({
-                message: "No winner could be declared (no votes cast)",
-                electionId,
-                winners: []
-            });
-        }
+        // Update election results
+        await Election.findByIdAndUpdate(
+            electionId,
+            {
+                resultsAnnounced: true,
+                winnerIds: winners.map(w => w._id), // store all winners in case of tie
+                active: false,
+            },
+            { new: true }
+        );
 
-        res.json({
+        // Return the result
+        return res.json({
             message: winners.length > 1 ? "It's a tie!" : "Winner declared successfully",
             electionId,
-            winners: winners.map(winner => ({
-                candidateId: winner._id,
-                name: winner.name,
-                studentId: winner.StudentId,
-                email: winner.email,
-                position: winner.position,
-                voteCount: winner.voteCount
-            })),
             isTie: winners.length > 1,
-            declaredAt: new Date()
+            declaredAt: new Date(),
+            winners: winners.map(w => ({
+                candidateId: w._id,
+                name: w.name,
+                studentId: w.StudentId,
+                email: w.email,
+                position: w.position,
+                voteCount: w.voteCount,
+            })),
         });
-
     } catch (error) {
+        console.error("Error declaring winner:", error);
         res.status(500).json({ error: "Failed to declare winner" });
     }
 };
-exports.declareWinner = declareWinner;
+
+exports.result = declareWinner;
+
+
+// Declare election results and set winner
+exports.declareElectionResults = async (req, res) => {
+    try {
+        const { electionId } = req.params;
+        const election = await Election.findById(electionId);
+        if (!election) {
+            return res.status(404).json({ error: "Election not found" });
+        }
+
+        // Check if results have already been announced
+        if (election.resultsAnnounced) {
+            return res.status(400).json({ error: "Results have already been announced for this election" });
+        }
+
+        const now = new Date();
+        const resultDate = new Date(election.resultAnnouncementDate);
+        
+        if (now < resultDate) {
+            return res.status(400).json({ 
+                error: "Results cannot be announced yet", 
+                availableAt: resultDate 
+            });
+        }
+        console.log(election);
+
+        let winner = null;
+            // Automatic winner calculation
+            const candidates = await Candidate.find({ 
+                electionId: electionId,
+                status: "approved"
+            });
+            console.log("Candidates",candidates);
+
+            const candidateVotes = await Promise.all(
+                candidates.map(async (candidate) => {
+                    const voteCount = await Vote.countDocuments({ 
+                        candidateId: candidate._id,
+                        electionId: electionId
+                    });
+                    return { ...candidate.toObject(), voteCount };
+                })
+            );
+
+            // Sort by votes and get winner
+            candidateVotes.sort((a, b) => b.voteCount - a.voteCount);
+            
+            if (candidateVotes.length > 0 && candidateVotes[0].voteCount > 0) {
+                // Check for tie
+                const maxVotes = candidateVotes[0].voteCount;
+                const winners = candidateVotes.filter(c => c.voteCount === maxVotes);
+                
+                if (winners.length > 1) {
+                    return res.status(400).json({ 
+                        error: "There is a tie. Please manually select the winner",
+                        tiedCandidates: winners.map(w => ({
+                            id: w._id,
+                            name: w.name,
+                            voteCount: w.voteCount
+                        }))
+                    });
+                }
+                
+                winner = candidateVotes[0];
+            }
+        // Update election with results
+        const updatedElection = await Election.findByIdAndUpdate(
+            electionId,
+            {
+                resultsAnnounced: true,
+                winnerId: winner ? winner._id : null,
+                active: false // Deactivate election after results
+            },
+            { new: true }
+        ).populate('winnerId', 'name position StudentId');
+
+        // Get final vote counts for all candidates
+        const finalResults = await exports.getElectionResults(
+            { params: { electionId } },
+            { json: (data) => data }
+        );  
+        console.log(finalResults)
+
+        res.json({
+            message: "Election results have been officially declared",
+            election: {
+                id: updatedElection._id,
+                title: updatedElection.title,
+                post: updatedElection.post,
+                resultsAnnounced: true,
+                winner: winner ? {
+                    id: winner._id,
+                    name: winner.name,
+                    position: winner.position,
+                    studentId: winner.StudentId
+                } : null,
+                announcedAt: new Date()
+            }
+        });
+
+    } catch (error) {
+        res.status(500).json({ message: "Failed to declare election results" , error});
+    }
+};
+
+// Check if voting is still allowed
+exports.checkVotingStatus = async (req, res) => {
+    try {
+        const { electionId } = req.params;
+
+        const election = await Election.findById(electionId);
+        if (!election) {
+            return res.status(404).json({ error: "Election not found" });
+        }
+
+        const now = new Date();
+        const votingDate = new Date(election.votingDate);
+        const resultDate = new Date(election.resultAnnouncementDate);
+
+        let status = "unknown";
+        let canVote = false;
+        let message = "";
+
+        if (!election.active) {
+            status = "inactive";
+            message = "Election is not active";
+        } else if (election.resultsAnnounced) {
+            status = "results_announced";
+            message = "Results have been announced. Voting is closed";
+        } else if (now < votingDate) {
+            status = "not_started";
+            message = "Voting has not started yet";
+        } else if (now >= resultDate) {
+            status = "time_ended";
+            message = "Voting time has ended";
+        } else {
+            status = "active";
+            message = "Voting is currently active";
+            canVote = true;
+        }
+
+        res.json({
+            electionId,
+            electionTitle: election.title,
+            status,
+            canVote,
+            message,
+            votingDate: election.votingDate,
+            resultAnnouncementDate: election.resultAnnouncementDate,
+            resultsAnnounced: election.resultsAnnounced,
+            winner: election.winnerId ? await Candidate.findById(election.winnerId).select('name position') : null
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: "Failed to check voting status" });
+    }
+};
+
+// Reopen voting (Admin only - in case of issues)
+exports.reopenVoting = async (req, res) => {
+    try {
+        const { electionId } = req.params;
+
+        const election = await Election.findByIdAndUpdate(
+            electionId,
+            {
+                resultsAnnounced: false,
+                winnerId: null,
+                active: true
+            },
+            { new: true }
+        );
+
+        if (!election) {
+            return res.status(404).json({ error: "Election not found" });
+        }
+
+        res.json({
+            message: "Voting has been reopened for this election",
+            election: {
+                id: election._id,
+                title: election.title,
+                active: election.active,
+                resultsAnnounced: election.resultsAnnounced
+            }
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: "Failed to reopen voting" });
+    }
+};

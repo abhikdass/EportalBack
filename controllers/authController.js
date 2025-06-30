@@ -43,7 +43,7 @@ exports.registerUser = async (req, res) => {
 exports.login = async (req, res) => {
     try {
         const { username, password } = req.body;
-        const user = await User.findOne({ username: username.toLowerCase() });
+        const user = await User.findOne({ username: username.toLowerCase().trim() });
         if (!user) return res.status(401).json({ error: "Invalid username" });
 
         const isMatch = await bcrypt.compare(password, user.password);

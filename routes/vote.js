@@ -10,9 +10,12 @@ const {
     getVoteUpdatesSSE,
     getElectionResults,
     getActiveElectionResults,
-    declareWinner,
+    getWinnerAnnouncement,
     getAllElectionResults,
-    getApprovedCandidates
+    getApprovedCandidates,
+    result,
+    checkVotingStatus,
+    reopenVoting
 } = require("../controllers/voteController");
 
 // Public routes (for viewing live results)
@@ -21,17 +24,28 @@ router.get("/live-count/:electionId", getLiveVoteCount);
 router.get("/live-count/active", getActiveLiveVoteCount);
 router.get("/statistics/:electionId", getVoteStatistics);
 router.get("/live-updates/:electionId", getVoteUpdatesSSE); // Server-Sent Events
+router.get("/voting-status/:electionId", checkVotingStatus); // Check if voting is allowed
 
 // Result routes (public access after result announcement time)
 router.get("/results/:electionId", getElectionResults);
 router.get("/results/active", getActiveElectionResults);
-router.get("/winner/:electionId", verifyToken, (req, res, next) => {
-    if (req.role !== "ecofficer") {
-        return res.status(403).json({ error: "Only EC Officer can view winner" });
+router.get("/winner/:electionId", getWinnerAnnouncement);
+router.get("/results/all", getAllElectionResults);
+
+// Admin/EC Officer routes for result management
+router.get("/declare-results/:electionId", verifyToken, (req, res, next) => {
+    if (req.role !== "admin" && req.role !== "ecofficer") {
+        return res.status(403).json({ error: "Only Admin or EC Officer can declare results" });
     }
     next();
-}, declareWinner);
-router.get("/results/all", getAllElectionResults);
+}, result);
+
+router.post("/reopen-voting/:electionId", verifyToken, (req, res, next) => {
+    if (req.role !== "admin") {
+        return res.status(403).json({ error: "Only Admin can reopen voting" });
+    }
+    next();
+}, reopenVoting);
 
 // Protected routes (require authentication)
 router.post("/cast", verifyToken, (req, res, next) => {

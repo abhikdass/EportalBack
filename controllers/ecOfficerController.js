@@ -2,6 +2,24 @@ const Candidate = require("../models/Candidate");
 const User = require("../models/User");
 const Election = require("../models/Election");
 
+
+
+exports.deleteElection = async (req, res) => {
+  try {
+    const { electionId } = req.params;
+
+    // Delete all candidates related to this election
+    await Candidate.deleteMany({ electionId });
+
+    // Delete the election
+    await Election.findByIdAndDelete(electionId);
+
+    res.status(200).json({ message: "Election and associated candidates deleted." });
+  } catch (error) {
+    console.error("Delete Election Error:", error);
+    res.status(500).json({ error: "Server error while deleting election." });
+  }
+};
 exports.getCandidates = async (req, res) => {
     try {
         const pending = await Candidate.find({ status: "pending" })

@@ -704,81 +704,233 @@ Returns the same structure as above for the currently active election.
 }
 ```
 
-## Result Features
+## Result Declaration & Voting Control APIs
 
-### 🏆 **Winner Determination**
-- Automatically identifies winner(s) based on highest vote count
-- Handles tie situations (multiple winners with same vote count)
-- Provides winner percentage and vote count
+### Declare Election Results
+**POST** `/api/vote/declare-results/:electionId`
 
-### 📊 **Comprehensive Results**
-- Complete candidate rankings with vote counts and percentages
-- Voter turnout statistics
-- Hourly vote distribution analysis
-- Election timeline information
-
-### ⏰ **Time-based Access Control**
-- Results only available after `resultAnnouncementDate`
-- Returns availability time if accessed too early
-- Prevents premature result disclosure
-
-### 📈 **Analytics & Insights**
-- Vote distribution by time periods
-- Turnout percentage calculations
-- Candidate performance rankings
-- Historical election comparisons
-
-## Result Access Examples
-
-**Check Results Availability:**
-```javascript
-fetch('/api/vote/results/123')
-  .then(response => {
-    if (response.status === 400) {
-      // Results not yet available
-      return response.json().then(data => {
-        console.log('Results available at:', data.availableAt);
-      });
-    }
-    return response.json();
-  })
-  .then(results => {
-    if (results) {
-      displayResults(results);
-    }
-  });
+**Headers:**
+```
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
 
-**Winner Announcement:**
+**Body (Optional):**
+```json
+{
+  "winnerId": "60f7b1234567890abcdef456"
+}
+```
+
+**Response (Automatic Winner):**
+```json
+{
+  "message": "Election results have been officially declared",
+  "election": {
+    "id": "60f7b1234567890abcdef123",
+    "title": "Student Council Election 2024",
+    "post": "President",
+    "resultsAnnounced": true,
+    "winner": {
+      "id": "60f7b1234567890abcdef456",
+      "name": "John Doe",
+      "position": "President",
+      "studentId": "ST2024001"
+    },
+    "announcedAt": "2024-06-30T..."
+  }
+}
+```
+
+**Response (Tie Detected):**
+```json
+{
+  "error": "There is a tie. Please manually select the winner",
+  "tiedCandidates": [
+    {
+      "id": "60f7b1234567890abcdef456",
+      "name": "John Doe",
+      "voteCount": 75
+    },
+    {
+      "id": "60f7b1234567890abcdef789",
+      "name": "Jane Smith",
+      "voteCount": 75
+    }
+  ]
+}
+```
+
+### Check Voting Status
+**GET** `/api/vote/voting-status/:electionId`
+
+**Response:**
+```json
+{
+  "electionId": "60f7b1234567890abcdef123",
+  "electionTitle": "Student Council Election 2024",
+  "status": "active",
+  "canVote": true,
+  "message": "Voting is currently active",
+  "votingDate": "2024-08-01T...",
+  "resultAnnouncementDate": "2024-08-02T...",
+  "resultsAnnounced": false,
+  "winner": null
+}
+```
+
+**Status Values:**
+- `inactive`: Election is not active
+- `not_started`: Voting hasn't started yet
+- `active`: Voting is currently open
+- `time_ended`: Voting time has ended
+- `results_announced`: Results have been declared
+
+### Reopen Voting (Admin Only)
+**POST** `/api/vote/reopen-voting/:electionId`
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "message": "Voting has been reopened for this election",
+  "election": {
+    "id": "60f7b1234567890abcdef123",
+    "title": "Student Council Election 2024",
+    "active": true,
+    "resultsAnnounced": false
+  }
+}
+```
+
+## Enhanced Vote Casting Protection
+
+### Updated Vote Casting Validation
+The `POST /api/vote/cast` endpoint now includes additional checks:
+
+**New Validation Rules:**
+1. **Results Announced Check**: Prevents voting after results are declared
+2. **Time-based Validation**: Checks against result announcement date
+3. **Winner Declaration**: Stops voting once winner is set
+
+**Error Responses:**
+```json
+{
+  "error": "Voting has ended. Results have been officially announced",
+  "resultsAnnouncedAt": "2024-08-02T..."
+}
+```
+
+## Voting Control Flow
+
+### 1. **Normal Voting Period**
+```
+Nomination → Campaign → Voting → Results Pending → Results Announced
+                         ↑               ↑
+                    Voting Allowed   Voting Blocked
+```
+
+### 2. **Result Declaration Process**
 ```javascript
-fetch('/api/vote/winner/123')
-  .then(response => response.json())
-  .then(data => {
-    if (data.isTie) {
-      displayTieAnnouncement(data.winners);
-    } else {
-      displayWinnerAnnouncement(data.winners[0]);
+// Check if automatic winner can be determined
+POST /api/vote/declare-results/123
+
+// If tie detected, manually select winner
+POST /api/vote/declare-results/123
+{
+  "winnerId": "456"
+}
+```
+
+### 3. **Emergency Procedures**
+```javascript
+// Admin can reopen voting if needed
+POST /api/vote/reopen-voting/123
+```
+
+## Updated Election Model Fields
+
+### New Fields Added:
+- `resultsAnnounced`: Boolean flag for result declaration
+- `winnerId`: Reference to winning candidate
+
+### Example Election Document:
+```json
+{
+  "_id": "60f7b1234567890abcdef123",
+  "title": "Student Council Election 2024",
+  "active": false,
+  "resultsAnnounced": true,
+  "winnerId": "60f7b1234567890abcdef456",
+  "votingDate": "2024-08-01T...",
+  "resultAnnouncementDate": "2024-08-02T..."
+}
+```
+
+## Frontend Integration Examples
+
+### Check Before Allowing Vote
+```javascript
+// Check if voting is still allowed
+const checkVoting = async (electionId) => {
+  const response = await fetch(`/api/vote/voting-status/${electionId}`);
+  const data = await response.json();
+  
+  if (data.canVote) {
+    // Show voting interface
+    showVotingForm();
+  } else {
+    // Show appropriate message
+    showMessage(data.message);
+  }
+};
+```
+
+### Declare Results (Admin/EC)
+```javascript
+// Automatic result declaration
+const declareResults = async (electionId) => {
+  const response = await fetch(`/api/vote/declare-results/${electionId}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'application/json'
     }
   });
-```
+  
+  const data = await response.json();
+  
+  if (data.error && data.tiedCandidates) {
+    // Handle tie - show manual selection
+    showTieResolver(data.tiedCandidates);
+  } else {
+    // Results declared successfully
+    showResults(data.election);
+  }
+};
 
-**All Elections Summary:**
-```javascript
-fetch('/api/vote/results/all')
-  .then(response => response.json())
-  .then(data => {
-    displayElectionSummary(data.elections);
-    updateDashboardStats(data);
+// Manual winner selection for ties
+const selectWinner = async (electionId, winnerId) => {
+  const response = await fetch(`/api/vote/declare-results/${electionId}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ winnerId })
   });
+  
+  const data = await response.json();
+  showResults(data.election);
+};
 ```
 
-## Error Handling
-
-- **404**: Election not found
-- **400**: Results not yet available (includes availability time)
-- **500**: Server error during result calculation
-
-## Permissions
-- **View Results**: Public access (after announcement time)
-- **View Winner**: Public access (after announcement time)
-- **View All Results**: Public access
+## Permissions Summary
+- **Declare Results**: Admin and EC Officer
+- **Reopen Voting**: Admin only
+- **Check Voting Status**: Public access
+- **Cast Vote**: Users only (with time/status validation)

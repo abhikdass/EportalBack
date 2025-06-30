@@ -12,6 +12,8 @@ const electionSchema = new mongoose.Schema({
     resultAnnouncementDate: Date,
     type: { type: String }, // e.g., "Student Council"
     active: { type: Boolean, default: false },
+    resultsAnnounced: { type: Boolean, default: false },
+    winnerId: { type: mongoose.Schema.Types.ObjectId, ref: "Candidate" },
     createdAt: { type: Date, default: Date.now }
 });
 
